@@ -1,8 +1,8 @@
-# Sensitive API Keys
 .env
 *.env
 backend/.env
-frontend/.env.local
+backend/*/.env
+frontend/.env*
 
 # Virtual Envs & Dependencies
 venv/
@@ -16,6 +16,6 @@ frontend/.next/
 __pycache__/
 *.pyc
 
-# Local databases & registry cache
+# Local databases
 documents_registry.json
 qdrant_local/
