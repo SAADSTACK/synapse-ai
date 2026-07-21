@@ -1,0 +1,21 @@
+# Sensitive API Keys
+.env
+*.env
+backend/.env
+frontend/.env.local
+
+# Virtual Envs & Dependencies
+venv/
+backend/venv/
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+.next/
+frontend/.next/
+__pycache__/
+*.pyc
+
+# Local databases & registry cache
+documents_registry.json
+qdrant_local/
