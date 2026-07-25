@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ⚡ Synapse AI — Enterprise Agentic RAG Knowledge Engine
 
-## Getting Started
+**Synapse AI** is a production-grade, asynchronous Agentic Retrieval-Augmented Generation (RAG) system built to parse, index, and query enterprise documents with multi-hop reasoning, live token streaming, and cited vector search.
 
-First, run the development server:
+---
 
+## 🌟 Key Features
+
+* **Autonomous Multi-Agent Routing:** Built on **LangGraph** state machines with conditional tool-calling and self-correction.
+* **Serverless Vector Architecture:** Leverages **Pinecone Serverless** for high-dimensional embedding storage (3,072 dimensions) with metadata-based document scoping.
+* **High-Velocity Inference:** Powered by **Groq Llama 3.1 (8B)** for ultra-low latency LLM generation.
+* **Persistent Document Registry:** Features real-time PDF chunking, cloud inventory tracking, and targeted document purging.
+* **Modern Executive Dashboard:** Designed with Next.js 14, Tailwind CSS, React Markdown, and fluid **Framer Motion** spring physics.
+
+---
+
+## 🛠️ Tech Stack
+
+* **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Framer Motion, React Markdown
+* **Backend:** FastAPI, Python 3.11, Uvicorn, Asynchronous SSE Streaming
+* **Orchestration:** LangGraph, LangChain
+* **Vector Store:** Pinecone Cloud Vector Database
+* **Models:** Groq Llama 3.1 8B Instant (Chat Engine), Google Gemini Embedding 2 (Dense Embeddings)
+
+---
+
+## 🚀 Getting Started Locally
+
+### 1. Prerequisites
+Ensure you have Python 3.10+, Node.js 18+, and your API keys for Groq, Google AI Studio, and Pinecone.
+
+### 2. Backend Setup
 ```bash
+cd backend
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+
+pip install -r requirements.txt
+uvicorn main:app --reload
+
+#Front End Setup 
+cd frontend
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
