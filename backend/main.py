@@ -27,7 +27,6 @@ load_dotenv()
 
 app = FastAPI()
 
-# Allow connections from Vercel domain and local testing
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,18 +35,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. CORE AI ENGINES
-llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
-embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview", task_type="RETRIEVAL_DOCUMENT")
+# 1. CORE AI ENGINES & PINECONE (Safe Lazy Setup)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "agentic-knowledge-base")
 
-# 2. PINECONE CLOUD CONNECT
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+# Safe LLM Initialization
+try:
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, groq_api_key=GROQ_API_KEY or "dummy")
+except Exception:
+    llm = None
 
-pc = Pinecone(api_key=PINECONE_API_KEY)
-vector_store = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
+# Safe Embeddings Initialization
+try:
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-2-preview", 
+        task_type="RETRIEVAL_DOCUMENT",
+        google_api_key=GOOGLE_API_KEY or "dummy"
+    )
+except Exception:
+    embeddings = None
 
-# 3. PERSISTENT JSON REGISTRY HELPER (Supports Vercel ephemeral /tmp storage)
+# Safe Vector Store
+try:
+    pc = Pinecone(api_key=PINECONE_API_KEY or "dummy")
+    vector_store = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
+except Exception:
+    vector_store = None
+
+# 3. PERSISTENT JSON REGISTRY HELPER
 REGISTRY_FILE = "/tmp/documents_registry.json" if os.getenv("VERCEL") else "documents_registry.json"
 
 def load_registry():
@@ -71,6 +88,8 @@ def save_registry(registry):
 def query_knowledge_base(search_query: str) -> str:
     """Queries the Pinecone cloud database to fetch relevant text blocks from uploaded documents."""
     try:
+        if not vector_store:
+            return "Vector store not initialized properly."
         docs = vector_store.similarity_search(search_query, k=4)
         if not docs:
             return "No matching records found inside the cloud document collection."
@@ -84,7 +103,7 @@ def query_knowledge_base(search_query: str) -> str:
         return f"Cloud database query error: {str(e)}"
 
 tools_map = {"query_knowledge_base": query_knowledge_base}
-llm_with_tools = llm.bind_tools([query_knowledge_base])
+llm_with_tools = llm.bind_tools([query_knowledge_base]) if llm else None
 
 # 5. LANGGRAPH STATE MACHINE
 class AgentState(TypedDict):
@@ -95,6 +114,8 @@ def call_model_node(state: AgentState):
         content="You are an advanced Agentic Knowledge Assistant with access to a cloud knowledge base. "
                 "Always support your final answers with direct citations including the source filename."
     )
+    if not llm_with_tools:
+        raise HTTPException(status_code=500, detail="LLM engine is not configured.")
     response = llm_with_tools.invoke([system_instruction] + state["messages"])
     return {"messages": [response]}
 
@@ -167,7 +188,8 @@ async def upload_document(file: UploadFile = File(...)):
     chunks = text_splitter.split_text(raw_text)
     
     documents = [Document(page_content=chunk, metadata={"source": file.filename}) for chunk in chunks]
-    vector_store.add_documents(documents=documents)
+    if vector_store:
+        vector_store.add_documents(documents=documents)
     
     # Save to persistent JSON registry
     registry = load_registry()
@@ -183,7 +205,8 @@ class DeleteDocPayload(BaseModel):
 @app.post("/documents/delete")
 async def delete_document(payload: DeleteDocPayload):
     try:
-        vector_store.delete(filter={"source": payload.filename})
+        if vector_store:
+            vector_store.delete(filter={"source": payload.filename})
         registry = load_registry()
         if payload.filename in registry:
             del registry[payload.filename]
