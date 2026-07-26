@@ -27,9 +27,10 @@ load_dotenv()
 
 app = FastAPI()
 
+# Allow connections from Vercel domain and local testing
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,8 +47,8 @@ INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 vector_store = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
 
-# 3. PERSISTENT JSON REGISTRY HELPER
-REGISTRY_FILE = "documents_registry.json"
+# 3. PERSISTENT JSON REGISTRY HELPER (Supports Vercel ephemeral /tmp storage)
+REGISTRY_FILE = "/tmp/documents_registry.json" if os.getenv("VERCEL") else "documents_registry.json"
 
 def load_registry():
     if os.path.exists(REGISTRY_FILE):
@@ -59,8 +60,11 @@ def load_registry():
     return {}
 
 def save_registry(registry):
-    with open(REGISTRY_FILE, "w") as f:
-        json.dump(registry, f, indent=2)
+    try:
+        with open(REGISTRY_FILE, "w") as f:
+            json.dump(registry, f, indent=2)
+    except Exception:
+        pass
 
 # 4. AGENT TOOLS
 @tool
@@ -124,6 +128,7 @@ class ChatPayload(BaseModel):
     message: str
     thread_id: str = "default_session"
 
+@app.post("/api/chat")
 @app.post("/chat")
 async def process_agent_chat(payload: ChatPayload):
     config = {"configurable": {"thread_id": payload.thread_id}}
@@ -141,6 +146,7 @@ async def process_agent_chat(payload: ChatPayload):
 
     return StreamingResponse(generate_tokens(), media_type="text/event-stream")
 
+@app.get("/api/documents")
 @app.get("/documents")
 async def list_documents():
     """Returns persistent list of documents synced to Pinecone."""
@@ -148,6 +154,7 @@ async def list_documents():
     inventory = [{"filename": fname, "chunks": count} for fname, count in registry.items()]
     return {"status": "Success", "documents": inventory}
 
+@app.post("/api/upload")
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
     if not file.filename.endswith('.pdf'):
@@ -172,6 +179,7 @@ async def upload_document(file: UploadFile = File(...)):
 class DeleteDocPayload(BaseModel):
     filename: str
 
+@app.post("/api/documents/delete")
 @app.post("/documents/delete")
 async def delete_document(payload: DeleteDocPayload):
     try:
@@ -184,6 +192,7 @@ async def delete_document(payload: DeleteDocPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
+@app.get("/api")
 @app.get("/")
 def read_root():
     return {"status": "Online"}
