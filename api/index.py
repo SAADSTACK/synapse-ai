@@ -1,12 +1,16 @@
 import sys
 import os
 
-# Root aur Backend directory ko explicitly path mein add karein
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
-backend_dir = os.path.abspath(os.path.join(parent_dir, "backend"))
+# Add root and backend to python path dynamically
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKEND_DIR = os.path.join(ROOT_DIR, "backend")
 
-sys.path.insert(0, parent_dir)
-sys.path.insert(0, backend_dir)
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
-from backend.main import app
+try:
+    from backend.main import app
+except Exception as e:
+    from main import app

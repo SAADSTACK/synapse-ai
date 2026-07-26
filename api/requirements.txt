@@ -1,7 +1,13 @@
 fastapi
 uvicorn
-google-generativeai
-groq
-pinecone-client
-python-dotenv
 pydantic
+python-dotenv
+pypdf
+langchain
+langchain-core
+langchain-community
+langchain-groq
+langchain-google-genai
+langchain-pinecone
+pinecone-client
+langgraph
