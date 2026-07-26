@@ -8,16 +8,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from langchain_groq import ChatGroq
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-
-from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone
-
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
@@ -25,7 +18,6 @@ from pypdf import PdfReader
 
 load_dotenv()
 
-# Top-level FastAPI instance (Vercel looks for 'app')
 app = FastAPI()
 
 app.add_middleware(
@@ -36,34 +28,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. ENVIRONMENT & KEYS
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "agentic-knowledge-base")
+# HELPER INITIALIZERS (Lazy load to prevent top-level import crashes)
+def get_llm():
+    from langchain_groq import ChatGroq
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY environment variable is missing on Vercel.")
+    return ChatGroq(model="llama-3.1-8b-instant", temperature=0, groq_api_key=key)
 
-# Safe AI Initialization
-try:
-    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, groq_api_key=GROQ_API_KEY or "dummy")
-except Exception:
-    llm = None
+def get_vector_store():
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    from langchain_pinecone import PineconeVectorStore
 
-try:
+    g_key = os.getenv("GOOGLE_API_KEY")
+    p_key = os.getenv("PINECONE_API_KEY")
+    idx_name = os.getenv("PINECONE_INDEX_NAME", "agentic-knowledge-base")
+
+    if not g_key or not p_key:
+        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY or PINECONE_API_KEY missing on Vercel.")
+
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="gemini-embedding-2-preview", 
+        model="gemini-embedding-2-preview",
         task_type="RETRIEVAL_DOCUMENT",
-        google_api_key=GOOGLE_API_KEY or "dummy"
+        google_api_key=g_key
     )
-except Exception:
-    embeddings = None
+    return PineconeVectorStore(index_name=idx_name, embedding=embeddings)
 
-try:
-    pc = Pinecone(api_key=PINECONE_API_KEY or "dummy")
-    vector_store = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
-except Exception:
-    vector_store = None
-
-# 2. PERSISTENT REGISTRY
 REGISTRY_FILE = "/tmp/documents_registry.json" if os.getenv("VERCEL") else "documents_registry.json"
 
 def load_registry():
@@ -82,39 +72,36 @@ def save_registry(registry):
     except Exception:
         pass
 
-# 3. AGENT TOOLS & LANGGRAPH
+# TOOLS & AGENT LOGIC
 @tool
 def query_knowledge_base(search_query: str) -> str:
-    """Queries Pinecone database for document chunks."""
+    """Queries the Pinecone cloud database to fetch relevant text blocks."""
     try:
-        if not vector_store:
-            return "Vector store not active."
-        docs = vector_store.similarity_search(search_query, k=4)
+        v_store = get_vector_store()
+        docs = v_store.similarity_search(search_query, k=4)
         if not docs:
-            return "No matching records found."
+            return "No matching records found inside the cloud document collection."
         
         formatted = []
         for d in docs:
-            src = d.metadata.get("source", "Unknown")
+            src = d.metadata.get("source", "Unknown Document")
             formatted.append(f"[Source: {src}]\nContext:\n{d.page_content}")
         return "\n\n---\n\n".join(formatted)
     except Exception as e:
-        return f"Query error: {str(e)}"
+        return f"Cloud database query error: {str(e)}"
 
 tools_map = {"query_knowledge_base": query_knowledge_base}
-llm_with_tools = llm.bind_tools([query_knowledge_base]) if llm else None
 
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 def call_model_node(state: AgentState):
+    llm = get_llm().bind_tools([query_knowledge_base])
     system_instruction = SystemMessage(
         content="You are an advanced Agentic Knowledge Assistant with access to a cloud knowledge base. "
                 "Always support your final answers with direct citations including the source filename."
     )
-    if not llm_with_tools:
-        raise HTTPException(status_code=500, detail="LLM not configured.")
-    response = llm_with_tools.invoke([system_instruction] + state["messages"])
+    response = llm.invoke([system_instruction] + state["messages"])
     return {"messages": [response]}
 
 def execute_tools_node(state: AgentState):
@@ -123,7 +110,6 @@ def execute_tools_node(state: AgentState):
     for tool_call in last_msg.tool_calls:
         tool_func = tools_map[tool_call["name"]]
         output = tool_func.invoke(tool_call["args"])
-        from langchain_core.messages import ToolMessage
         tool_outputs.append(ToolMessage(content=str(output), name=tool_call["name"], tool_call_id=tool_call["id"]))
     return {"messages": tool_outputs}
 
@@ -142,7 +128,7 @@ workflow.add_edge("tools", "llm_agent")
 
 agent_brain = workflow.compile(checkpointer=MemorySaver())
 
-# 4. ENDPOINTS
+# ROUTES
 class ChatPayload(BaseModel):
     message: str
     thread_id: str = "default_session"
@@ -153,15 +139,18 @@ async def process_agent_chat(payload: ChatPayload):
     config = {"configurable": {"thread_id": payload.thread_id}}
 
     async def generate_tokens():
-        async for event in agent_brain.astream_events(
-            {"messages": [HumanMessage(content=payload.message)]},
-            config=config,
-            version="v2"
-        ):
-            if event["event"] == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                if hasattr(chunk, "content") and chunk.content:
-                    yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+        try:
+            async for event in agent_brain.astream_events(
+                {"messages": [HumanMessage(content=payload.message)]},
+                config=config,
+                version="v2"
+            ):
+                if event["event"] == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    if hasattr(chunk, "content") and chunk.content:
+                        yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'content': f'\n\n**Error:** `{str(e)}`'})}\n\n"
 
     return StreamingResponse(generate_tokens(), media_type="text/event-stream")
 
@@ -177,6 +166,9 @@ async def list_documents():
 async def upload_document(file: UploadFile = File(...)):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    
     contents = await file.read()
     reader = PdfReader(io.BytesIO(contents))
     raw_text = "".join([page.extract_text() or "" for page in reader.pages])
@@ -185,8 +177,9 @@ async def upload_document(file: UploadFile = File(...)):
     chunks = text_splitter.split_text(raw_text)
     
     docs = [Document(page_content=c, metadata={"source": file.filename}) for c in chunks]
-    if vector_store:
-        vector_store.add_documents(documents=docs)
+    
+    v_store = get_vector_store()
+    v_store.add_documents(documents=docs)
     
     registry = load_registry()
     registry[file.filename] = len(docs)
@@ -201,8 +194,8 @@ class DeleteDocPayload(BaseModel):
 @app.post("/documents/delete")
 async def delete_document(payload: DeleteDocPayload):
     try:
-        if vector_store:
-            vector_store.delete(filter={"source": payload.filename})
+        v_store = get_vector_store()
+        v_store.delete(filter={"source": payload.filename})
         registry = load_registry()
         if payload.filename in registry:
             del registry[payload.filename]

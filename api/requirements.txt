@@ -4,6 +4,7 @@ pydantic
 python-dotenv
 pypdf
 langchain-core
+langchain-text-splitters
 langchain-groq
 langchain-google-genai
 langchain-pinecone
